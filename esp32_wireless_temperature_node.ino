@@ -28,7 +28,10 @@
 
 /* includes */
 #include <Arduino.h>
-#include "esp_sleep.h"
+#include <esp_sleep.h>
+#include <WiFi.h>
+#include <esp_now.h>
+#include <esp_wifi.h>
 
 /* Global Variables */
 struct DataPacket_t {
@@ -40,6 +43,12 @@ struct DataPacket_t {
   float batteryVoltage;   /* Store measured battery voltage */
   float powerVoltage;     /* Store measured power supply voltage */
 } dataPacket;
+
+// Broadcast MAC address
+uint8_t broadcastAddress[] = {
+    0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF
+};
 
 
 /**
@@ -138,6 +147,14 @@ void printDataPacket()
 
 
 
+// ===== Send callback =====
+void onDataSent(const wifi_tx_info_t *info, esp_now_send_status_t status) {
+    Serial.print("Send status: ");
+    Serial.println(status == ESP_NOW_SEND_SUCCESS ?
+                   "SUCCESS" : "FAIL");
+}
+
+
 void setup(){
   /* Read internal temperature immediately after startup to prevent self heating during operation.*/
   for(byte count = 0; count < TEMPERATURE_REDING_DEBOUNCE; count++){
@@ -158,8 +175,51 @@ void setup(){
 
 
   /* start and config radio */
+  WiFi.mode(WIFI_STA);
+
+  esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
+
+  if (esp_now_init() != ESP_OK) {
+      Serial.println("ESP-NOW init failed");
+  }
+    
+  esp_now_register_send_cb(onDataSent);
+
+  // Add broadcast peer
+  esp_now_peer_info_t peerInfo = {};
+  memcpy(peerInfo.peer_addr, broadcastAddress, 6);
+
+  peerInfo.channel = 1;
+  peerInfo.encrypt = false;
+
+  if (esp_now_add_peer(&peerInfo) != ESP_OK) {
+      Serial.println("Failed to add peer");
+  }
+
   /* send dataPacket via esp now */
+  esp_err_t result = esp_now_send(
+      broadcastAddress,
+      (uint8_t *)&dataPacket,
+      sizeof(dataPacket)
+  );
+
+  if (result == ESP_OK) {
+      Serial.println("Packet queued");
+  } else {
+      Serial.println("Send failed");
+  }
+
+  // Give radio time to transmit
+  delay(100);
+
   /* stop radio */
+  esp_now_deinit();
+
+  WiFi.disconnect(true, true);
+  WiFi.mode(WIFI_OFF);
+
+  // Extra power saving
+  esp_wifi_stop();
 
   /*print dataPacket before sleep */
   printDataPacket();
@@ -181,9 +241,10 @@ void setup(){
     delay(30); // let serial finish printing
 
     // Enter deep sleep (CPU stops here)
-    //esp_deep_sleep_start(); // <================= uncomment for production
+    esp_deep_sleep_start();
   }
   
+    // if device is charging continue to init wifi, elegant ota and config web page.
 }
 
 void loop(){
