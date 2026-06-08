@@ -54,59 +54,44 @@ uint8_t broadcastAddress[] = {
 /**
  * @brief Read and calculate the real input voltage from a voltage divider.
  *
- * This function reads the ADC value from the specified GPIO pin,
- * converts the raw ADC reading into the measured ADC voltage,
- * then reconstructs the original input voltage using the
- * voltage divider resistor values.
- *
- * Voltage divider formula:
- *
- * Vout = Vin * (Rbottom / (Rtop + Rbottom))
- *
- * Rearranged to calculate the original voltage:
- *
- * Vin = Vout * ((Rtop + Rbottom) / Rbottom)
+ * Uses ESP32 ADC calibration via analogReadMilliVolts()
+ * and averages multiple samples to reduce noise.
  *
  * @param pin
  * ADC GPIO pin connected to the voltage divider output.
  *
  * @param rTop
  * Top resistor value in ohms.
- * Connected between the measured voltage source and ADC output.
  *
  * @param rBottom
  * Bottom resistor value in ohms.
- * Connected between ADC output and GND.
+ *
+ * @param samples
+ * Number of ADC samples to average.
  *
  * @return float
  * Calculated real input voltage in volts.
  */
-float readVoltage(uint8_t pin, float rTop, float rBottom)
-{
-    /* Read raw ADC value */
-    uint16_t adcRaw = analogRead(pin);
+float readVoltage(uint8_t pin, float rTop, float rBottom, uint8_t samples = 16) {
 
-    /*
-     * Convert raw ADC reading into actual ADC voltage.
-     *
-     * Example:
-     * 0    -> 0.0V
-     * 4095 -> 3.3V
-     */
-    float adcVoltage =
-        ((float)adcRaw / ADC_MAX_VALUE) * ADC_REFERENCE_VOLTAGE;
+    uint32_t sumMilliVolts = 0;
 
-    /*
-     * Recalculate original voltage before the voltage divider.
-     *
-     * Divider equation:
-     *
-     * Vin = Vout * ((Rtop + Rbottom) / Rbottom)
-     */
-    float realVoltage =
-        adcVoltage * ((rTop + rBottom) / rBottom);
+    for (uint8_t i = 0; i < samples; i++){
+        sumMilliVolts += analogReadMilliVolts(pin);
 
-    /* Return calculated real voltage */
+        // Small delay between readings
+        delayMicroseconds(200);
+    }
+
+    // Average ADC voltage (mV)
+    float adcMilliVolts = (float)sumMilliVolts / samples;
+
+    // Convert mV -> V
+    float adcVoltage = adcMilliVolts / 1000.0f;
+
+    // Reverse voltage divider
+    float realVoltage = adcVoltage * ((rTop + rBottom) / rBottom);
+
     return realVoltage;
 }
 
@@ -128,8 +113,7 @@ float readVoltage(uint8_t pin, float rTop, float rBottom)
  *
  * @warning Intended for debugging only; not optimized for production logging.
  */
-void printDataPacket()
-{
+void printDataPacket(){
     Serial.println("=== Data Packet ===");
 
     Serial.printf("Device ID: %d\n", dataPacket.deviceID);
